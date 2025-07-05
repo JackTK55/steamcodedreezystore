@@ -134,7 +134,6 @@ qs('#searchBtn').onclick=async ()=>{
       <div class="account-login">${match.login}</div>
       <div class="details">
         <div class="detail">ID: ${match.item_id}</div>
-        <div class="detail">Preço: ${match.price||'N/A'}</div>
         <div class="detail">Data: ${new Date(match.published_date*1000).toLocaleString('pt-BR')}</div>
       </div>
       <button class="get-code-btn">📧 Obter Código</button>
