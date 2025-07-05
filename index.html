@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Steam Code Finder Dreezy Store</title>
+<title>Steam Code Finder – LZT Market</title>
 <style>
 /* —— ESTILO GERAL —— */
 *{margin:0;padding:0;box-sizing:border-box}
@@ -32,6 +32,9 @@ button:disabled{background:#6c757d;cursor:not-allowed;transform:none}
 .error,.success{padding:14px;border-radius:10px;margin-top:15px}
 .error{background:rgba(244,67,54,.25);border:1px solid rgba(244,67,54,.5)}
 .success{background:rgba(76,175,80,.25);border:1px solid rgba(76,175,80,.5)}
+.progress-info{background:rgba(102,192,244,.15);padding:12px;border-radius:8px;margin-top:10px;font-size:14px;border:1px solid rgba(102,192,244,.3)}
+.search-status{background:rgba(255,193,7,.15);padding:10px;border-radius:6px;margin-top:10px;font-size:13px;color:rgba(255,255,255,.9);border:1px solid rgba(255,193,7,.3)}
+.found-indicator{background:rgba(76,175,80,.25);padding:10px;border-radius:6px;margin-top:10px;font-size:14px;color:#fff;border:1px solid rgba(76,175,80,.5)}
 </style>
 </head>
 <body>
@@ -43,7 +46,7 @@ button:disabled{background:#6c757d;cursor:not-allowed;transform:none}
 
 <section>
 <label for="login">🔍 Login da Conta Steam</label>
-<input id="login" placeholder="ex: vyo36" autocomplete="off" />
+<input id="login" placeholder="ex: clicaruimcaqqs" autocomplete="off" />
 <button id="searchBtn">Buscar Conta</button>
 <div id="status"></div>
 </section>
@@ -53,111 +56,309 @@ button:disabled{background:#6c757d;cursor:not-allowed;transform:none}
 
 <script>
 /* —— CONFIGURAÇÕES —— */
-const TOKEN = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9.eyJzdWIiOjI3ODg5MDEsImlzcyI6Imx6dCIsImlhdCI6MTc1MTY4MTAxNCwianRpIjoiODA5ODIzIiwic2NvcGUiOiJiYXNpYyByZWFkIHBvc3QgY29udmVyc2F0ZSBwYXltZW50IGludm9pY2UgY2hhdGJveCBtYXJrZXQifQ.l34LDDotkQQqoGPmlRqP4WM_HRZByiUmu3vdK0frD4-189LZN_we9mmOwfYIGYYIyxXDd-Wmgij8sWkOGSiDOFS4u5KiDbTirwxHi_h-jFEI76QY-1shEZXsyKhG5zzOF8Ewh5GQbcg3qUQ-cu5VlD5m3CdzJWoaZhl-HuJ47L0';          // ← cole seu token (scope: basic read market)
-const API  = 'https://api.lzt.market';
-const DELAY = 3100;                      // 3,1 s entre chamadas
+const TOKEN = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9.eyJzdWIiOjI3ODg5MDEsImlzcyI6Imx6dCIsImlhdCI6MTc1MTY4MTAxNCwianRpIjoiODA5ODIzIiwic2NvcGUiOiJiYXNpYyByZWFkIHBvc3QgY29udmVyc2F0ZSBwYXltZW50IGludm9pY2UgY2hhdGJveCBtYXJrZXQifQ.l34LDDotkQQqoGPmlRqP4WM_HRZByiUmu3vdK0frD4-189LZN_we9mmOwfYIGYYIyxXDd-Wmgij8sWkOGSiDOFS4u5KiDbTirwxHi_h-jFEI76QY-1shEZXsyKhG5zzOF8Ewh5GQbcg3qUQ-cu5VlD5m3CdzJWoaZhl-HuJ47L0';
+const API = 'https://api.lzt.market';
+const DELAY = 1500; // 1.5s entre chamadas
+let searchCancelled = false; // Flag para cancelar busca
 
 /* —— AJUDA —— */
-const qs   = s => document.querySelector(s);
-const qsi  = s => document.querySelectorAll(s);
-const wait = ms => new Promise(r=>setTimeout(r,ms));
-const log  = (...a)=>console.log('[LZT]',...a);
+const qs = s => document.querySelector(s);
+const qsi = s => document.querySelectorAll(s);
+const wait = ms => new Promise(r => setTimeout(r, ms));
 
 /* —— NÚCLEO —— */
-async function api(endpoint, opt={}) {
+async function api(endpoint, opt = {}) {
   await wait(DELAY);
-  const res = await fetch(API+endpoint,{
-    headers:{Authorization:`Bearer ${TOKEN}`,'Accept':'application/json'},
+  const res = await fetch(API + endpoint, {
+    headers: { Authorization: `Bearer ${TOKEN}`, 'Accept': 'application/json' },
     ...opt
   });
-  if(!res.ok){
-    const j = await res.json().catch(()=>({error:'Erro'}));
-    throw new Error(j.error||'HTTP '+res.status);
+  
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({ error: 'Erro' }));
+    throw new Error(j.error || 'HTTP ' + res.status);
   }
+  
   return res.json();
 }
 
-async function getUserId(){
-  const {user}=await api('/me');
+async function getUserId() {
+  const { user } = await api('/me');
   return user.user_id;
 }
 
-async function loadAllSteam(uid){
-  let page=1, items=[], more=true;
-  while(more){
-    const data=await api(`/user/${uid}/orders?category_id=1&page=${page}&per_page=50`);
-    items.push(...data.items);
-    more = data.items.length===50;
-    page++;
+// NOVA FUNÇÃO: Busca até encontrar a conta específica
+async function searchUntilFound(uid, targetLogin) {
+  let page = 1;
+  let totalProcessed = 0;
+  let totalSteamAccounts = 0;
+  const maxPages = 1000; // Limite de segurança
+  
+  console.log(`🎯 Iniciando busca por: "${targetLogin}"`);
+  searchCancelled = false;
+  
+  while (page <= maxPages && !searchCancelled) {
+    try {
+      // Atualiza status em tempo real
+      qs('#status').innerHTML = `
+        🔍 <strong>Buscando conta "${targetLogin}"...</strong><br>
+        📄 Página atual: ${page}<br>
+        📊 Contas Steam verificadas: ${totalSteamAccounts}<br>
+        📈 Total de itens processados: ${totalProcessed}
+      `;
+      
+      console.log(`📄 Verificando página ${page}...`);
+      
+      // Múltiplos endpoints para máxima compatibilidade
+      const endpoints = [
+        `/user/${uid}/orders?category_id=1&page=${page}&per_page=100&order=date_desc`,
+        `/user/${uid}/orders?category_id=1&page=${page}&per_page=50&order=date_desc`,
+        `/user/${uid}/orders?page=${page}&per_page=100&category_id=1`,
+        `/user/${uid}/orders?page=${page}&per_page=50&category_id=1&order=published_date_desc`
+      ];
+      
+      let data = null;
+      
+      for (const endpoint of endpoints) {
+        try {
+          data = await api(endpoint);
+          console.log(`✅ Sucesso com: ${endpoint}`);
+          break;
+        } catch (err) {
+          console.log(`❌ Falha: ${endpoint} - ${err.message}`);
+          continue;
+        }
+      }
+      
+      if (!data || !data.items || !Array.isArray(data.items)) {
+        console.log(`⚠️ Página ${page}: Dados inválidos`);
+        break;
+      }
+      
+      const pageItems = data.items;
+      totalProcessed += pageItems.length;
+      
+      console.log(`📦 Página ${page}: ${pageItems.length} itens encontrados`);
+      
+      // Filtra contas Steam
+      const steamItems = pageItems.filter(item => {
+        return item.category_id === 1 || 
+               item.category_id === '1' || 
+               (item.title && item.title.toLowerCase().includes('steam')) ||
+               (item.login && item.login.trim().length > 0);
+      });
+      
+      totalSteamAccounts += steamItems.length;
+      console.log(`🎮 Página ${page}: ${steamItems.length} contas Steam`);
+      
+      // BUSCA A CONTA ESPECÍFICA NESTA PÁGINA
+      for (const item of steamItems) {
+        const itemLogin = (item.login || '').toLowerCase();
+        const searchLogin = targetLogin.toLowerCase();
+        
+        // Busca exata primeiro, depois parcial
+        if (itemLogin === searchLogin || 
+            (itemLogin.includes(searchLogin) && searchLogin.length > 3) ||
+            (searchLogin.includes(itemLogin) && itemLogin.length > 3)) {
+          
+          console.log(`🎯 CONTA ENCONTRADA!`);
+          console.log(`   • Login: ${item.login}`);
+          console.log(`   • ID: ${item.item_id}`);
+          console.log(`   • Página: ${page}`);
+          console.log(`   • Após verificar ${totalSteamAccounts} contas Steam`);
+          
+          return {
+            found: true,
+            account: item,
+            stats: {
+              totalPages: page,
+              totalProcessed,
+              totalSteamAccounts,
+              foundOnPage: page
+            }
+          };
+        }
+      }
+      
+      // Se não há mais itens, para a busca
+      if (pageItems.length === 0) {
+        console.log(`🏁 Página ${page}: Vazia - fim da busca`);
+        break;
+      }
+      
+      // Se retornou menos que o esperado, pode ser última página
+      if (pageItems.length < 50) {
+        console.log(`🏁 Página ${page}: Menos itens - possível última página`);
+        // Mas continua para verificar se há mais páginas
+      }
+      
+      page++;
+      
+    } catch (error) {
+      console.log(`❌ Erro na página ${page}: ${error.message}`);
+      page++;
+      
+      // Se muitos erros consecutivos, para
+      if (page > 10 && totalProcessed === 0) {
+        console.log(`🛑 Muitos erros consecutivos, parando busca`);
+        break;
+      }
+    }
   }
-  return items;
+  
+  // Conta não encontrada
+  console.log(`❌ Busca concluída sem encontrar "${targetLogin}"`);
+  console.log(`   • Páginas verificadas: ${page - 1}`);
+  console.log(`   • Contas Steam verificadas: ${totalSteamAccounts}`);
+  console.log(`   • Total processado: ${totalProcessed}`);
+  
+  return {
+    found: false,
+    stats: {
+      totalPages: page - 1,
+      totalProcessed,
+      totalSteamAccounts
+    }
+  };
 }
 
-function renderError(msg){
-  qs('#results').innerHTML=`<div class="error">${msg}</div>`;
+function renderError(msg) {
+  qs('#results').innerHTML = `<div class="error">${msg}</div>`;
 }
 
-function copy(text,e){
-  navigator.clipboard.writeText(text).then(()=>{
-    const o=e.target.textContent;e.target.textContent='✅ Copiado!';
-    setTimeout(()=>e.target.textContent=o,1500);
+function copy(text, e) {
+  navigator.clipboard.writeText(text).then(() => {
+    const o = e.target.textContent;
+    e.target.textContent = '✅ Copiado!';
+    setTimeout(() => e.target.textContent = o, 1500);
   });
 }
 
-/* —— OBTÉM CÓDIGO (múltiplos endpoints) —— */
-async function fetchCode(itemId,email){
-  const paths=[
+/* —— OBTÉM CÓDIGO —— */
+async function fetchCode(itemId, email) {
+  const paths = [
     `/${itemId}/email-code?email=${encodeURIComponent(email)}`,
     `/${itemId}/email-code`,
-    `/market/${itemId}/email-code?email=${encodeURIComponent(email)}`
+    `/market/${itemId}/email-code?email=${encodeURIComponent(email)}`,
+    `/market/${itemId}/email-code`
   ];
-  for(const p of paths){
-    try{const d=await api(p);if(d?.codeData?.code)return d.codeData;}catch{}
+  
+  for (const p of paths) {
+    try {
+      const d = await api(p);
+      if (d?.codeData?.code) return d.codeData;
+    } catch (err) {
+      continue;
+    }
   }
+  
   throw new Error('Código não localizado');
 }
 
-/* —— BUSCA —— */
-qs('#searchBtn').onclick=async ()=>{
-  const login=qs('#login').value.trim().toLowerCase();
-  if(!login)return renderError('Informe o login exato da conta Steam.');
-  qs('#results').innerHTML='';qs('#status').textContent='🔄 Carregando compras...';
-
-  try{
-    const uid=await getUserId();
-    const items=await loadAllSteam(uid);
-    const match=items.find(i=>(i.login||'').toLowerCase()===login);
-    if(!match){qs('#status').textContent='';return renderError('Conta não encontrada.');}
+/* —— BUSCA PRINCIPAL —— */
+qs('#searchBtn').onclick = async () => {
+  const login = qs('#login').value.trim();
+  if (!login) return renderError('Informe o login exato da conta Steam.');
+  
+  qs('#results').innerHTML = '';
+  qs('#status').innerHTML = '🔄 Iniciando busca inteligente...';
+  
+  // Muda botão para cancelar
+  const btn = qs('#searchBtn');
+  const originalText = btn.textContent;
+  btn.textContent = 'Cancelar Busca';
+  btn.onclick = () => {
+    searchCancelled = true;
+    btn.textContent = originalText;
+    btn.onclick = qs('#searchBtn').onclick;
+    qs('#status').innerHTML = '❌ Busca cancelada pelo usuário';
+  };
+  
+  try {
+    const uid = await getUserId();
+    console.log(`👤 ID do usuário: ${uid}`);
     
-    const html=`<div class="account">
-      <h3>${match.title||'Sem título'}</h3>
-      <div class="account-login">${match.login}</div>
-      <div class="details">
-        <div class="detail">ID: ${match.item_id}</div>
-        <div class="detail">Data: ${new Date(match.published_date*1000).toLocaleString('pt-BR')}</div>
+    // BUSCA CONTÍNUA ATÉ ENCONTRAR
+    const result = await searchUntilFound(uid, login);
+    
+    // Restaura botão
+    btn.textContent = originalText;
+    btn.onclick = qs('#searchBtn').onclick;
+    
+    if (searchCancelled) {
+      qs('#status').innerHTML = '❌ Busca cancelada';
+      return;
+    }
+    
+    if (!result.found) {
+      qs('#status').textContent = '';
+      const statsMsg = `
+        <div class="search-status">
+          🔍 <strong>Busca Completa Realizada:</strong><br>
+          • Páginas verificadas: ${result.stats.totalPages}<br>
+          • Contas Steam verificadas: ${result.stats.totalSteamAccounts}<br>
+          • Total de itens processados: ${result.stats.totalProcessed}
+        </div>
+      `;
+      return renderError(`Conta "${login}" não encontrada após busca completa.${statsMsg}`);
+    }
+    
+    // CONTA ENCONTRADA!
+    const account = result.account;
+    const accountDate = new Date(account.published_date * 1000).toLocaleString('pt-BR');
+    
+    const html = `
+      <div class="account">
+        <h3>${account.title || 'Sem título'}</h3>
+        <div class="account-login">${account.login}</div>
+        <div class="details">
+          <div class="detail">ID: ${account.item_id}</div>
+          <div class="detail">Data: ${accountDate}</div>
+          <div class="detail">Estado: ${account.item_state || 'N/A'}</div>
+        </div>
+        <button class="get-code-btn">📧 Obter Código</button>
+        <div class="found-indicator">
+          ✅ <strong>Conta encontrada!</strong><br>
+          • Encontrada na página: ${result.stats.foundOnPage}<br>
+          • Páginas verificadas: ${result.stats.totalPages}<br>
+          • Contas Steam verificadas: ${result.stats.totalSteamAccounts}<br>
+          • Total processado: ${result.stats.totalProcessed}
+        </div>
       </div>
-      <button class="get-code-btn">📧 Obter Código</button>
-    </div>`;
+    `;
     
-    qs('#results').innerHTML=html;qs('#status').textContent='';
-    qs('.get-code-btn').onclick=async e=>{
-      e.target.disabled=true;e.target.textContent='⏳ Buscando...';
-      try{
-        const data=await fetchCode(match.item_id,match.temp_email||match.login);
-        const codeBox=`<div class="code-box">
-          <span>${data.code}</span>
-          <button class="copy-btn">Copiar</button>
-        </div>`;
-        e.target.insertAdjacentHTML('afterend',codeBox);
-        qs('.copy-btn').onclick=ev=>copy(data.code,ev);
-        e.target.textContent='✅ Código Obtido';
-      }catch(err){
-        renderError('Erro: '+err.message);
-        e.target.textContent='Tentar novamente';e.target.disabled=false;
+    qs('#results').innerHTML = html;
+    qs('#status').textContent = '';
+    
+    // Event listener para obter código
+    qs('.get-code-btn').onclick = async e => {
+      e.target.disabled = true;
+      e.target.textContent = '⏳ Buscando código...';
+      
+      try {
+        const data = await fetchCode(account.item_id, account.temp_email || account.login);
+        const codeBox = `
+          <div class="code-box">
+            <span>${data.code}</span>
+            <button class="copy-btn" onclick="copy('${data.code}', event)">Copiar</button>
+          </div>
+        `;
+        e.target.insertAdjacentHTML('afterend', codeBox);
+        e.target.textContent = '✅ Código Obtido';
+      } catch (err) {
+        renderError('Erro ao obter código: ' + err.message);
+        e.target.textContent = 'Tentar novamente';
+        e.target.disabled = false;
       }
     };
-  }catch(err){
-    renderError('Erro geral: '+err.message);
+    
+  } catch (err) {
+    console.log('❌ Erro geral:', err);
+    renderError('Erro geral: ' + err.message);
+    qs('#status').textContent = '';
+    // Restaura botão
+    btn.textContent = originalText;
+    btn.onclick = qs('#searchBtn').onclick;
   }
 };
 </script>
